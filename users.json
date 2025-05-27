@@ -1,0 +1,17 @@
+{
+  "users": {
+    "admin": "admin123456",
+    "sales": "sales123"
+  },
+  "roles": {
+    "admin": "admin",
+    "sales": "custom"
+  },
+  "permissions": {
+    "sales": {
+      "Бюджет": "editor",
+      "Продажи": "editor",
+      "Отчёты": "editor"
+    }
+  }
+}
