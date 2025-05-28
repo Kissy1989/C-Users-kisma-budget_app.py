@@ -25,6 +25,37 @@ month_names = [
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
 ]
 
+# Функции определяем перед их использованием
+def load_data():
+    if os.path.exists(FILE_NAME):
+        return pd.read_excel(FILE_NAME)
+    else:
+        return pd.DataFrame(columns=["Дата", "Категория", "Сумма", "Тип", "Отдел"])
+
+def save_data(data):
+    data.to_excel(FILE_NAME, index=False)
+
+def load_users_data():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return (
+                data.get("users", USERS.copy()),
+                data.get("roles", ROLES.copy()),
+                data.get("permissions", {})
+            )
+        except Exception as e:
+            st.warning(f"users.json повреждён или невалиден: {e}. Будет создан новый файл по умолчанию.")
+            save_users_data(USERS.copy(), ROLES.copy(), {})
+            return USERS.copy(), ROLES.copy(), {}
+    else:
+        return USERS.copy(), ROLES.copy(), {}
+
+def save_users_data(users, roles, permissions):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"users": users, "roles": roles, "permissions": permissions}, f, ensure_ascii=False, indent=2)
+
 def login():
     st.sidebar.header("Вход")
     with st.sidebar.form("login_form", clear_on_submit=False):
@@ -51,12 +82,17 @@ def login():
                 st.success(f"Добро пожаловать, {username}!")
                 st.rerun()
             else:
-                st.error(f"Неверный логин или пароль (пароль не совпал, сохранён: '{stored_pass}')")
+                st.error("Неверный логин или пароль")
         else:
-            st.error(f"Неверный логин или пароль (логин '{username}' не найден, список: {list(users.keys())})")
+            st.error("Неверный логин или пароль")
 
 # Домашняя страница и авторизация
 if "user" not in st.session_state:
+    # Всегда обновлять пользователей из файла перед login
+    users, roles, permissions = load_users_data()
+    st.session_state["users"] = users
+    st.session_state["roles"] = roles
+    st.session_state["permissions"] = permissions
     st.sidebar.title("Меню")
     login()
     st.image("https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=400&q=80", width=200)
@@ -75,38 +111,6 @@ if "user" not in st.session_state:
 user = st.session_state["user"]
 role = st.session_state["role"]
 
-def load_data():
-    if os.path.exists(FILE_NAME):
-        return pd.read_excel(FILE_NAME)
-    else:
-        return pd.DataFrame(columns=["Дата", "Категория", "Сумма", "Тип", "Отдел"])
-
-def save_data(data):
-    data.to_excel(FILE_NAME, index=False)
-
-def load_users_data():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return (
-            data.get("users", USERS.copy()),
-            data.get("roles", ROLES.copy()),
-            data.get("permissions", {})
-        )
-    else:
-        return USERS.copy(), ROLES.copy(), {}
-
-def save_users_data(users, roles, permissions):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump({"users": users, "roles": roles, "permissions": permissions}, f, ensure_ascii=False, indent=2)
-
-# При запуске — загрузить пользователей из файла
-if "users" not in st.session_state:
-    users, roles, permissions = load_users_data()
-    st.session_state["users"] = users
-    st.session_state["roles"] = roles
-    st.session_state["permissions"] = permissions
-
 # Кнопка выхода
 st.sidebar.title("Меню")
 if st.sidebar.button("Выйти"):
@@ -123,7 +127,11 @@ def manage_users():
     for m in MODULES:
         module_perms[m] = st.selectbox(f"Права для модуля '{m}'", ["editor", "viewer"], key=f"perm_{m}")
     if st.button("Создать пользователя"):
-        if new_username in st.session_state.get("users", USERS):
+        new_username = str(new_username).strip()
+        new_password = str(new_password).strip()
+        if not new_username or not new_password:
+            st.error("Логин и пароль не должны быть пустыми!")
+        elif new_username in st.session_state.get("users", USERS):
             st.error("Пользователь с таким именем уже существует!")
         else:
             users = st.session_state.get("users", USERS).copy()
@@ -132,21 +140,26 @@ def manage_users():
             users[new_username] = new_password
             roles[new_username] = "custom"
             permissions[new_username] = module_perms
-            st.session_state["users"] = users
-            st.session_state["roles"] = roles
-            st.session_state["permissions"] = permissions
-            save_users_data(users, roles, permissions)
-            st.success(f"Пользователь {new_username} создан!")
-    st.subheader("Список пользователей и прав по модулям и паролей")
+            try:
+                save_users_data(users, roles, permissions)
+                # После сохранения перечитываем users.json и обновляем session_state
+                users2, roles2, permissions2 = load_users_data()
+                st.session_state["users"] = users2
+                st.session_state["roles"] = roles2
+                st.session_state["permissions"] = permissions2
+                st.success(f"Пользователь {new_username} создан и сохранён!")
+            except Exception as e:
+                st.error(f"Ошибка при сохранении пользователя: {e}")
+    st.subheader("Список пользователей и прав по модулям")
     users = st.session_state.get("users", USERS)
     permissions = st.session_state.get("permissions", {})
     table = []
     for u in users:
-        row = [u, users[u]]
+        row = [u]
         for m in MODULES:
             row.append(permissions.get(u, {}).get(m, "editor" if ROLES.get(u, "editor") == "editor" else "viewer"))
         table.append(row)
-    st.table(pd.DataFrame(table, columns=["Пользователь", "Пароль"] + MODULES))
+    st.table(pd.DataFrame(table, columns=["Пользователь"] + MODULES))
 
 # --- Проверка прав пользователя на модуль ---
 def get_module_permission(user, module):
@@ -167,15 +180,19 @@ def user_settings():
     st.subheader(f"Текущий логин: {user}")
     users = st.session_state.get("users", USERS).copy()
     roles = st.session_state.get("roles", ROLES).copy()
+    permissions = st.session_state.get("permissions", {}).copy()
     # Смена пароля
     st.markdown("**Смена пароля**")
     old_pass = st.text_input("Текущий пароль", type="password", key="old_pass")
     new_pass = st.text_input("Новый пароль", type="password", key="new_pass")
     if st.button("Сменить пароль"):
-        if users.get(user) == old_pass:
+        old_pass = str(old_pass).strip()
+        new_pass = str(new_pass).strip()
+        stored_pass = str(users.get(user, "")).strip()
+        if stored_pass == old_pass:
             users[user] = new_pass
             st.session_state["users"] = users
-            save_users_data(users, roles, st.session_state.get("permissions", {}))
+            save_users_data(users, roles, permissions)
             st.success("Пароль успешно изменён!")
         else:
             st.error("Неверный текущий пароль!")
@@ -185,17 +202,24 @@ def user_settings():
     if st.button("Сменить логин"):
         if not new_login or new_login in users:
             st.error("Некорректный или уже существующий логин!")
-        elif users.get(user) != old_pass:
-            st.error("Для смены логина введите верный текущий пароль выше!")
         else:
-            users[new_login] = users.pop(user)
-            roles[new_login] = roles.pop(user)
-            st.session_state["users"] = users
-            st.session_state["roles"] = roles
-            save_users_data(users, roles, st.session_state.get("permissions", {}))
-            st.success("Логин успешно изменён! Пожалуйста, войдите заново.")
-            st.session_state.clear()
-            st.rerun()
+            old_pass = str(old_pass).strip()
+            stored_pass = str(users.get(user, "")).strip()
+            if stored_pass != old_pass:
+                st.error("Для смены логина введите верный текущий пароль выше!")
+            else:
+                users[new_login] = users.pop(user)
+                roles[new_login] = roles.pop(user)
+                # Переносим права
+                if user in permissions:
+                    permissions[new_login] = permissions.pop(user)
+                st.session_state["users"] = users
+                st.session_state["roles"] = roles
+                st.session_state["permissions"] = permissions
+                save_users_data(users, roles, permissions)
+                st.success("Логин успешно изменён! Пожалуйста, войдите заново.")
+                st.session_state.clear()
+                st.rerun()
 
 if menu == "Настройки пользователя":
     user_settings()
