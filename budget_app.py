@@ -8,12 +8,23 @@ st.set_page_config(page_title="Бюджет компании", page_icon="📊",
 
 FILE_NAME = "budget_data.xlsx"
 USERS_FILE = "users.json"
+SPRAVOCHNIK_FILE = "spravochnik.xlsx"
+
+# Загрузка справочника статей и подстатей
+@st.cache_data
+def load_spravochnik():
+    if os.path.exists(SPRAVOCHNIK_FILE):
+        return pd.read_excel(SPRAVOCHNIK_FILE)
+    else:
+        return pd.DataFrame(columns=["Категория", "Счет", "Статья", "Подстатья"])
 
 USERS = {
-    "admin": "admin123456"
+    "admin": "admin123456",
+    "supervisor": "supervisor123"
 }
 ROLES = {
-    "admin": "admin"
+    "admin": "admin",
+    "supervisor": "supervisor"
 }
 MODULES = ["Бюджет", "Продажи", "Отчёты"]
 
@@ -165,6 +176,8 @@ def manage_users():
 def get_module_permission(user, module):
     if user == "admin":
         return "editor"
+    if user == "supervisor":
+        return "viewer_all"
     permissions = st.session_state.get("permissions", {})
     return permissions.get(user, {}).get(module, ROLES.get(user, "editor"))
 
@@ -230,13 +243,18 @@ elif menu == "Управление пользователями" and role == "ad
 elif menu == "Бюджет":
     st.title("📊 Бюджет компании по отделам")
     perm = get_module_permission(user, "Бюджет")
+    sprav = load_spravochnik()
     if perm == "editor":
         st.subheader(f"Ваш отдел: {user}")
         st.subheader("➕ Добавить запись")
         year = st.selectbox("Год", years, index=years.index(current_year))
         month_name = st.selectbox("Месяц", month_names, index=current_month - 1)
-        category = st.selectbox("Статья затрат", ["материалы", "услуга", "амортизация"])
-        subcategory = st.text_input("Подстатья (например, канцтовары, аренда и т.д.)")
+        # Выбор категории и статьи из справочника
+        category = st.selectbox("Категория", sorted(sprav["Категория"].dropna().unique()))
+        statya_list = sprav[sprav["Категория"] == category]["Статья"].dropna().unique()
+        statya = st.selectbox("Статья", sorted(statya_list))
+        podstatya_list = sprav[(sprav["Категория"] == category) & (sprav["Статья"] == statya)]["Подстатья"].dropna().unique()
+        subcategory = st.selectbox("Подстатья", sorted(podstatya_list))
         amount = st.number_input("Сумма", step=0.01)
         entry_type = st.selectbox("Тип", ["Доход", "Расход"])
         if st.button("Добавить"):
@@ -244,6 +262,7 @@ elif menu == "Бюджет":
             new_row = {
                 "Дата": date_str,
                 "Категория": category,
+                "Статья": statya,
                 "Подстатья": subcategory,
                 "Сумма": amount,
                 "Тип": entry_type,
@@ -252,6 +271,8 @@ elif menu == "Бюджет":
             df = load_data()
             if "Подстатья" not in df.columns:
                 df["Подстатья"] = ""
+            if "Статья" not in df.columns:
+                df["Статья"] = ""
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             save_data(df)
             st.success("Запись добавлена!")
@@ -266,12 +287,42 @@ elif menu == "Бюджет":
             st.info("Нет данных для отображения.")
     elif perm == "viewer":
         st.subheader(f"Ваш отдел: {user}")
+        sprav = load_spravochnik()
         df = load_data()
         if "Подстатья" not in df.columns:
             df["Подстатья"] = ""
+        if "Статья" not in df.columns:
+            df["Статья"] = ""
         df = df[df["Отдел"] == user]
+        # Фильтры по справочнику
+        category_options = sorted(sprav["Категория"].dropna().unique())
+        category = st.selectbox("Категория", ["Все"] + category_options)
+        if category != "Все":
+            df = df[df["Категория"] == category]
+            statya_options = sorted(sprav[sprav["Категория"] == category]["Статья"].dropna().unique())
+        else:
+            statya_options = sorted(sprav["Статья"].dropna().unique())
+        statya = st.selectbox("Статья", ["Все"] + statya_options)
+        if statya != "Все":
+            df = df[df["Статья"] == statya]
+            podstatya_options = sorted(sprav[(sprav["Категория"] == category) & (sprav["Статья"] == statya)]["Подстатья"].dropna().unique())
+        else:
+            podstatya_options = sorted(sprav["Подстатья"].dropna().unique())
+        subcategory = st.selectbox("Подстатья", ["Все"] + podstatya_options)
+        if subcategory != "Все":
+            df = df[df["Подстатья"] == subcategory]
         if not df.empty:
-            pivot = df.pivot_table(index=["Категория", "Подстатья"], columns="Дата", values="Сумма", aggfunc="sum", fill_value=0)
+            pivot = df.pivot_table(index=["Категория", "Статья", "Подстатья"], columns="Дата", values="Сумма", aggfunc="sum", fill_value=0)
+            st.dataframe(pivot)
+        else:
+            st.info("Нет данных для отображения.")
+    elif perm == "viewer_all":
+        st.subheader("Бюджет всех отделов (только просмотр)")
+        df = load_data()
+        if "Подстатья" not in df.columns:
+            df["Подстатья"] = ""
+        if not df.empty:
+            pivot = df.pivot_table(index=["Категория", "Подстатья", "Отдел"], columns="Дата", values="Сумма", aggfunc="sum", fill_value=0)
             st.dataframe(pivot)
         else:
             st.info("Нет данных для отображения.")
@@ -305,10 +356,8 @@ elif menu == "Продажи":
         client = st.text_input("Покупатель")
         if st.button("Сохранить продажу"):
             st.success("Продажа добавлена (демо)")
+    elif perm == "viewer_all":
+        st.subheader("История продаж всех отделов (демо)")
+        st.info("Здесь будет таблица продаж всех отделов.")
     st.subheader("История продаж (демо)")
     st.info("Здесь будет таблица продаж.")
-
-elif menu == "Отчёты":
-    st.title("📈 Модуль отчётов")
-    st.subheader("Аналитика и отчёты по всем модулям (демо)")
-    st.info("Здесь будут графики и отчёты по бюджету, закупкам, продажам, складу и сотрудникам.")

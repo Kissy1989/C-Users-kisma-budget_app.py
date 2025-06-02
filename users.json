@@ -1,14 +1,30 @@
 {
   "users": {
     "admin": "admin123456",
-    "sales": "sales123"
+    "sales": "sales123456",
+    "buy": "buy123456",
+    "zakup": "zakup123456",
+    "supervisor": "supervisor123"
   },
   "roles": {
     "admin": "admin",
-    "sales": "custom"
+    "sales": "custom",
+    "buy": "custom",
+    "zakup": "custom",
+    "supervisor": "supervisor"
   },
   "permissions": {
     "sales": {
+      "Бюджет": "editor",
+      "Продажи": "editor",
+      "Отчёты": "editor"
+    },
+    "buy": {
+      "Бюджет": "editor",
+      "Продажи": "editor",
+      "Отчёты": "editor"
+    },
+    "zakup": {
       "Бюджет": "editor",
       "Продажи": "editor",
       "Отчёты": "editor"
